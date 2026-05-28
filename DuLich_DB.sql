@@ -1,25 +1,6 @@
-﻿USE master;
+USE master;
 GO
- 
-/* ============================================================
-   FILE HOÀN THIỆN - DATABASE WEB DU LỊCH
-   Các điểm đã chốt:
-   - Java dùng java_user để kết nối SQL Server.
-   - Phân quyền nghiệp vụ bằng USERS.Role: CUSTOMER / STAFF / MANAGER.
-   - BOOKINGS.FinalPrice là computed column, Java không INSERT/UPDATE cột này.
-   - TotalPrice không bao gồm SurchargeAmount; FinalPrice = TotalPrice - DiscountAmount + SurchargeAmount.
-   - Trigger hỗ trợ thanh toán, vé, audit, add-on, huỷ đơn và cập nhật ghế.
-   ============================================================ */
-
-/* ============================================================
-   DATABASE + LOGIN CHO JAVA
-   Chạy file này sẽ xoá và tạo lại database DuLich_DB.
-   Java kết nối bằng:
-     user     = java_user
-     password = 123456
-     database = DuLich_DB
-   ============================================================ */
- 
+  
 IF NOT EXISTS (
     SELECT 1 FROM sys.server_principals WHERE name = 'java_user'
 )
@@ -288,6 +269,7 @@ CREATE TABLE USERS
     FullName           NVARCHAR(500) NOT NULL,
     Phone              VARCHAR(10)   NOT NULL UNIQUE
                            CHECK (LEN(Phone)=10 AND Phone NOT LIKE '%[^0-9]%' AND Phone LIKE '0%'),
+    LoginName          NVARCHAR(100) NULL,
     PasswordHash       NVARCHAR(255) NOT NULL CHECK (LEN(PasswordHash) >= 60),
     /* FIX: đổi từ ADMIN → STAFF / MANAGER để tách bạch quyền nghiệp vụ */
     Role               NVARCHAR(20)  NOT NULL CHECK (Role IN ('CUSTOMER','STAFF','MANAGER')),
@@ -298,15 +280,15 @@ CREATE TABLE USERS
 );
 
  
-INSERT INTO USERS (FullName, Phone, PasswordHash, Role, IsActive) VALUES
-(N'Trưởng phòng', '0901111111', REPLICATE('x',60), 'MANAGER',  1),
-(N'Nhân viên A',  '0902222222', REPLICATE('x',60), 'STAFF',    1),
-(N'Nguyễn Văn A', '0903333333', REPLICATE('x',60), 'CUSTOMER', 1),
-(N'Trần Thị B',   '0904444444', REPLICATE('x',60), 'CUSTOMER', 1),
-(N'Lê Văn C',     '0905555555', REPLICATE('x',60), 'CUSTOMER', 1),
-(N'Phạm Thị D',   '0906666666', REPLICATE('x',60), 'CUSTOMER', 1),
-(N'Hoàng Văn E',  '0907777777', REPLICATE('x',60), 'CUSTOMER', 1),
-(N'Đặng Văn G',   '0908888888', REPLICATE('x',60), 'CUSTOMER', 1);
+INSERT INTO USERS (FullName, Phone, LoginName, PasswordHash, Role, IsActive) VALUES
+(N'Trưởng phòng', '0901111111', N'admin@gmail.com', REPLICATE('x',60), 'MANAGER',  1),
+(N'Nhân viên A',  '0902222222', N'staff@gmail.com', REPLICATE('x',60), 'STAFF',    1),
+(N'Nguyễn Văn A', '0903333333', NULL,               REPLICATE('x',60), 'CUSTOMER', 1),
+(N'Trần Thị B',   '0904444444', NULL,               REPLICATE('x',60), 'CUSTOMER', 1),
+(N'Lê Văn C',     '0905555555', NULL,               REPLICATE('x',60), 'CUSTOMER', 1),
+(N'Phạm Thị D',   '0906666666', NULL,               REPLICATE('x',60), 'CUSTOMER', 1),
+(N'Hoàng Văn E',  '0907777777', NULL,               REPLICATE('x',60), 'CUSTOMER', 1),
+(N'Đặng Văn G',   '0908888888', NULL,               REPLICATE('x',60), 'CUSTOMER', 1);
 
 /* ============================================================
    BẢNG TOUR NỔI BẬT
@@ -367,7 +349,6 @@ CREATE INDEX IDX_FeaturedTours_TourID
 ON FEATURED_TOURS(TourID);
 GO
 
-/* ========================= DỮ LIỆU MẪU TOUR NỔI BẬT ========================= */
 
 INSERT INTO FEATURED_TOURS 
 (
@@ -445,7 +426,6 @@ INSERT INTO COUPONS (CouponCode, DiscountType, DiscountValue, MaxUsagePerUser, M
 (N'VIP300',    'FIXED',      300000, 1, 10,   0, NULL,   '2026-07-31', 1, 1);
  
 -- Lưu trữ đơn đặt tour của khách
--- FIX: FinalPrice là computed column PERSISTED → Java KHÔNG set giá trị này, chỉ đọc
 CREATE TABLE BOOKINGS
 (
     BookingID       INT           PRIMARY KEY IDENTITY(1,1),
@@ -468,7 +448,12 @@ CREATE TABLE BOOKINGS
     CONSTRAINT FK_Bookings_Schedules FOREIGN KEY (ScheduleID, TourID) REFERENCES TOUR_SCHEDULES(ScheduleID, TourID),
     CONSTRAINT CHK_Bookings_Discount CHECK (DiscountAmount <= TotalPrice)
 );
- 
+INSERT INTO BOOKINGS (UserID, TourID, ScheduleID, BookingDate, TotalPrice, CouponID, DiscountAmount, SurchargeAmount, Status)
+VALUES
+(3, 1, 1, '2026-05-15 08:30:00', 1000000.00, NULL, 0.00, 0.00, 'PENDING'),
+(4, 1, 3, '2026-05-16 09:15:00', 1200000.00, 1, 200000.00, 200000.00, 'PAID'),
+(5, 2, 4, '2026-05-17 14:00:00', 1200000.00, NULL, 0.00, 0.00, 'COMPLETED');
+
 /* ============================================================
    BẢNG YÊU CẦU VẬN CHUYỂN
    Bộ phận mình không trực tiếp điều phối xe.
@@ -519,7 +504,11 @@ CREATE TABLE TRANSPORT_REQUESTS
     CONSTRAINT FK_TransportRequests_Users
         FOREIGN KEY (CreatedBy) REFERENCES USERS(UserID)
 );
-GO
+INSERT INTO TRANSPORT_REQUESTS 
+(ScheduleID, BookingID, PartnerName, ContactPhone, PickupLocation, DropoffLocation, PassengerCount, Note, Status, CreatedBy)
+VALUES
+(1, NULL, N'Dịch Vụ Xe Du Lịch Dương Quang', '0903112233', N'Văn phòng công ty lữ hành, Q.7, TP.HCM', N'Điểm tham quan miệt vườn Cần Thơ', 15, N'Thuê xe hợp đồng 29 chỗ đời mới, yêu cầu tài xế rành đường miền Tây.', 'SENT', 2),
+(3, NULL, N'Hợp Tác Xã Vận Tải Du Lịch Toàn Cầu', '0918445566', N'Điểm hẹn khách sạn nội thành TP.HCM', N'Khu du lịch sinh thái Vĩnh Long', 10, N'Thuê xe dịch vụ Limousine 16 chỗ ghế VIP đưa đón đoàn đi Núi Sâm.', 'CONFIRMED', 2);
 
 /* ========================= INDEXES CHO TRANSPORT_REQUESTS ========================= */
 
@@ -537,7 +526,7 @@ ON TRANSPORT_REQUESTS(CreatedAt);
 GO
 
 -- Lưu trữ danh sách hành khách trong đơn hàng
--- Giá vé: ADULT = 100%, CHILD = 50%, BABY = 25% (xem sp_GetTourPrice)
+-- Giá vé: ADULT = 100%, CHILD = 50%, BABY = 25% 
 CREATE TABLE BOOKING_PASSENGERS
 (
     PassengerID   INT           PRIMARY KEY IDENTITY(1,1),
@@ -555,7 +544,14 @@ CREATE TABLE BOOKING_PASSENGERS
         (PassengerType IN ('ADULT','CHILD') AND SlotsOccupied = 1) OR (PassengerType='BABY' AND SlotsOccupied = 0)
     )
 );
- 
+INSERT INTO BOOKING_PASSENGERS (BookingID, PassengerName, PassengerType, Price, SlotsOccupied)
+VALUES
+(1, N'Nguyễn Văn A', 'ADULT', 1000000.00, 1),
+(2, N'Trần Thị B', 'ADULT', 1200000.00, 1),
+(2, N'Bé Trần Dương Quang', 'BABY', 0.00, 0), 
+(3, N'Lê Văn C', 'ADULT', 1200000.00, 1);
+
+
 -- Lưu trữ các dịch vụ mua thêm (áo bà ba, xe đưa đón...)
 CREATE TABLE ADD_ONS
 (
@@ -587,7 +583,13 @@ CREATE TABLE BOOKING_ADD_ONS
     CONSTRAINT FK_BookingAddOns_AddOns   FOREIGN KEY (AddOnID)   REFERENCES ADD_ONS(AddOnID),
     CONSTRAINT UQ_BookingAddOns_Booking_AddOn UNIQUE (BookingID, AddOnID)
 );
- 
+INSERT INTO BOOKING_ADD_ONS (BookingID, AddOnID, Quantity, Price)
+VALUES
+(1, 1, 2, 50000.00),  -- Thuê 2 bộ áo bà ba cho đơn 1
+(1, 3, 1, 80000.00),  -- 1 suất ăn sáng bổ sung
+(2, 2, 1, 200000.00), -- 1 dịch vụ xe đưa đón từ TP.HCM cho đơn 2
+(2, 4, 2, 120000.00); -- 2 gói bảo hiểm du lịch
+
 -- Lưu trữ đánh giá của khách sau khi hoàn thành tour
 CREATE TABLE REVIEWS
 (
@@ -602,7 +604,11 @@ CREATE TABLE REVIEWS
     CONSTRAINT FK_Reviews_Bookings FOREIGN KEY (BookingID) REFERENCES BOOKINGS(BookingID),
     CONSTRAINT UQ_Reviews_User_Booking UNIQUE (UserID, BookingID)
 );
- 
+INSERT INTO REVIEWS (UserID, BookingID, Rating, ReviewContent, ReviewDate)
+VALUES
+(5, 3, 5, N'Tour trải nghiệm sinh thái tuyệt vời, hướng dẫn viên nhiệt tình, đồ ăn ngon rẻ!', '2026-05-20 17:30:00');
+
+
 /* ============================================================
    4. PHÂN HỆ THANH TOÁN & HUỶ ĐƠN
    ============================================================ */
@@ -620,7 +626,12 @@ CREATE TABLE PAYMENTS
     CreatedAt     DATETIME      NOT NULL DEFAULT GETDATE(),
     CONSTRAINT FK_Payments_Bookings FOREIGN KEY (BookingID) REFERENCES BOOKINGS(BookingID)
 );
- 
+ INSERT INTO PAYMENTS (BookingID, Amount, PaymentMethod, TransactionID, PaymentStatus, PaymentDate)
+VALUES
+(1, 1000000.00, 'CASH', NULL, 'PENDING', '2026-05-15 08:35:00'),                  
+(2, 1200000.00, 'BANKING', 'VIETQR_VCB_889922', 'SUCCESS', '2026-05-16 09:20:00'),      
+(3, 1200000.00, 'BANKING', 'VIETQR_MB_112233', 'SUCCESS', '2026-05-17 14:05:00');         
+
 -- Một booking chỉ có tối đa 1 lần thanh toán SUCCESS
 CREATE UNIQUE INDEX UIX_Payments_SuccessBooking ON PAYMENTS(BookingID) WHERE PaymentStatus='SUCCESS';
  
@@ -638,7 +649,11 @@ CREATE TABLE E_TICKETS
     CONSTRAINT FK_ETickets_Bookings FOREIGN KEY (BookingID) REFERENCES BOOKINGS(BookingID),
     CONSTRAINT CHK_ETickets_Expiry  CHECK (ExpiryDate IS NULL OR ExpiryDate > IssuedDate)
 );
- 
+INSERT INTO E_TICKETS (BookingID, TicketCode, QRCode, TicketStatus, IssuedDate, ExpiryDate)
+VALUES
+(2, 'TK_20260516_2_ABC12345', 'QR_20260516_2_112233', 'ACTIVE', '2026-05-16 09:20:00', '2026-07-12 23:59:59'),
+(3, 'TK_20260517_3_XYZ67890', 'QR_20260517_3_445566', 'USED', '2026-05-17 14:05:00', '2026-07-04 23:59:59');
+
 -- Lưu trữ thông tin công ty hủy chuyến và phương án đền bù
 CREATE TABLE TOUR_CANCELLATIONS
 (
@@ -656,7 +671,10 @@ CREATE TABLE TOUR_CANCELLATIONS
         OR (ResolutionType='REFUND'    AND NewScheduleID IS NULL    AND RefundPercent IS NOT NULL)
     )
 );
- 
+INSERT INTO TOUR_CANCELLATIONS (ScheduleID, CancelReason, ResolutionType, NewScheduleID, RefundPercent)
+VALUES
+(2, N'Do ảnh hưởng bão lớn đổ bộ miền Tây, đường sông cấm tàu chạy', 'REFUND', NULL, 100.00); 
+
 -- Mỗi lịch trình chỉ hủy 1 lần
 CREATE UNIQUE INDEX UQ_TourCancellations_ScheduleID ON TOUR_CANCELLATIONS(ScheduleID);
  
@@ -668,12 +686,14 @@ CREATE TABLE BOOKING_CANCELLATIONS
     CancelBy        NVARCHAR(20)  NOT NULL CHECK (CancelBy IN ('CUSTOMER','COMPANY')),
     CancelReason    NVARCHAR(500),
     RefundPercent   DECIMAL(5,2)  NOT NULL CHECK (RefundPercent BETWEEN 0 AND 100),
-    /* FIX: RefundAmount > 0 thực tế (chỉ tạo bản ghi khi có tiền hoàn) */
     RefundAmount    DECIMAL(12,2) NOT NULL CHECK (RefundAmount >= 0),
     CreatedAt       DATETIME      NOT NULL DEFAULT GETDATE(),
     CONSTRAINT FK_BookingCancellations_Bookings FOREIGN KEY (BookingID) REFERENCES BOOKINGS(BookingID)
 );
- 
+INSERT INTO BOOKING_CANCELLATIONS (BookingID, CancelBy, CancelReason, RefundPercent, RefundAmount)
+VALUES
+(1, 'CUSTOMER', N'Vì lí do sức khỏe khách không đi được', 90.00, 900000.00);
+
 -- Mỗi đơn hàng chỉ hủy 1 lần
 CREATE UNIQUE INDEX UQ_BookingCancellations_BookingID ON BOOKING_CANCELLATIONS(BookingID);
  
@@ -691,7 +711,10 @@ CREATE TABLE REFUNDS
     CreatedAt     DATETIME      NOT NULL DEFAULT GETDATE(),
     CONSTRAINT FK_Refunds_Bookings FOREIGN KEY (BookingID) REFERENCES BOOKINGS(BookingID)
 );
- 
+INSERT INTO REFUNDS (BookingID, RefundAmount, RefundMethod, RefundStatus, TransactionID, RefundDate)
+VALUES
+(1, 900000.00, 'BANKING', 'SUCCESS', 'REFUND_VND_001', '2026-05-18 10:00:00');
+
 -- Mỗi booking chỉ có tối đa 1 lần hoàn tiền đang PENDING
 CREATE UNIQUE INDEX UIX_Refunds_PendingBooking ON REFUNDS(BookingID) WHERE RefundStatus='PENDING';
  
@@ -710,7 +733,10 @@ CREATE TABLE USER_COUPON_USAGE
     CONSTRAINT FK_UserCouponUsage_Users   FOREIGN KEY (UserID)   REFERENCES USERS(UserID),
     CONSTRAINT FK_UserCouponUsage_Coupons FOREIGN KEY (CouponID) REFERENCES COUPONS(CouponID)
 );
- 
+INSERT INTO USER_COUPON_USAGE (UserID, CouponID, UsageCount, LastUsedAt)
+VALUES
+(4, 1, 1, '2026-05-16 09:15:00'); -- User 4 đã dùng Coupon 1 một lần
+
 -- Nhật ký giám sát hệ thống (ai sửa trạng thái đơn hàng, lúc nào)
 CREATE TABLE AUDIT_LOG
 (
@@ -745,7 +771,10 @@ CREATE TABLE IDEMPOTENCY_KEYS
     CONSTRAINT FK_IdempotencyKeys_Users      FOREIGN KEY (UserID) REFERENCES USERS(UserID),
     CONSTRAINT CHK_Idempotency_ExpiresAt_Future CHECK (ExpiresAt > CreatedAt)
 );
- 
+INSERT INTO IDEMPOTENCY_KEYS (IdempotencyKey, OperationType, UserID, Status, ExpiresAt)
+VALUES 
+('KEY_REQ_001', 'CREATE_BOOKING', 3, 'SUCCESS', '2026-06-01 10:00:00');
+
 CREATE UNIQUE INDEX UX_Idempotency_Operation_Key ON IDEMPOTENCY_KEYS(OperationType, IdempotencyKey);
  
 -- Sự kiện hệ thống chờ đồng bộ ra các hệ thống khác (Outbox Pattern)
@@ -822,6 +851,7 @@ GO
    6. INDEXES
    ============================================================ */
  
+CREATE UNIQUE INDEX UQ_USERS_LoginName_NotNull ON USERS(LoginName) WHERE LoginName IS NOT NULL;
 CREATE INDEX IDX_Tours_LocationID          ON TOURS(LocationID);
 CREATE INDEX IDX_Tours_CategoryID          ON TOURS(CategoryID);
 CREATE INDEX IDX_Tours_IsActive            ON TOURS(IsActive);
@@ -954,7 +984,7 @@ BEGIN
     LEFT JOIN E_TICKETS et ON et.BookingID = i.BookingID
     WHERE i.PaymentStatus = 'SUCCESS'
       AND b.Status        <> 'CANCELLED'
-      AND et.BookingID    IS NULL;          -- chưa có vé thì mới tạo
+      AND et.BookingID    IS NULL;          
 END;
 GO
  
